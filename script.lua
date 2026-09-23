@@ -1,20 +1,17 @@
 --[[
     ===================================================================
-    🎲 ROLL FOR ANIME! (LĂN CHO ANIME! 🎲) - ULTIMATE AUTO HUB V1.0
+    🎲 ROLL FOR ANIME! (LĂN CHO ANIME! 🎲) - ULTIMATE AUTO HUB V2.0 (TURBO FAST ROLL)
     Game: Roll for Anime! 🎲 (by Proton Laboratory)
     Tương thích 100% với Delta Executor (Android & PC), Codex, Wave, Hydrogen, Fluxus.
     
-    Tính năng cốt lõi:
-    1. ⚡ Auto Fast Roll (Bỏ qua Animation xúc xắc, roll siêu tốc liên tục)
-    2. 🍀 Auto Upgrade Dice (Tự nâng cấp cấp bậc xúc xắc nhân Luck x2 -> x67+)
-    3. 🧪 Auto Use Luck Potions & Clovers (Tự kích hoạt bình thuốc may mắn & cỏ 4 lá)
-    4. 🧲 Auto Collect Map Drops (Tự hút cỏ may mắn, tiền xu, kim cương trên map)
-    5. 🔄 Auto Rebirth (Tự chuyển sinh nhân may mắn vĩnh viễn)
-    6. 🐾 Auto Equip & Place Best Anime (Tự trang bị & xếp Anime kiếm tiền nhanh nhất)
-    7. 🗑️ Auto Delete / Skip Low Rarity (Tự dọn Anime thường, tránh đầy kho)
-    8. 🎁 One-Click Redeem All Codes (Tự nhập toàn bộ Code lấy Potion & Lượt quay)
-    9. 🏃 Tốc độ WalkSpeed, Lướt CFrame, Infinite Jump, Noclip & Float
-    10. 🛡️ Anti-AFK 24/7 & FPS Booster treo máy xuyên đêm
+    Cập nhật V2.0:
+    ⚡ TURBO FAST ROLL ĐỘT PHÁ:
+       - Tự động Hook Metamethod (__namecall) bắt chính xác 100% Remote Roll của game.
+       - Hủy bỏ hoàn toàn Cutscene & Animation xúc xắc (RenderStepped Neutralizer).
+       - Bỏ qua thời gian chờ UI, gọi thẳng Server Remote liên tục ở tốc độ cực đại (0.05s).
+       - Tự động kích hoạt tính năng "Skip Animation / Fast Roll" có sẵn trong cài đặt game.
+       - Tùy chỉnh tốc độ Roll: Siêu tốc (0.03s), Cực nhanh (0.05s), Nhanh (0.1s), Bình thường (0.25s).
+       - Bảng hiển thị thông tin Remote được bắt trực tiếp trên giao diện.
     ===================================================================
 --]]
 
@@ -71,7 +68,8 @@ end)
 local State = {
     AutoRoll = false,
     FastRoll = true,
-    RollDelay = 0.15,
+    KillCutscenes = true,
+    RollDelayIndex = 2, -- 0.05s by default
     
     AutoUpgradeDice = false,
     AutoUsePotions = false,
@@ -83,7 +81,7 @@ local State = {
     AutoPlaceAnime = false,
     
     AutoDeleteLowRarity = false,
-    DeleteThreshold = "Rare", -- Delete: Common, Uncommon, Rare
+    DeleteThreshold = "Rare",
     
     SpeedEnabled = false,
     WalkSpeed = 60,
@@ -97,8 +95,22 @@ local State = {
     FPSBoost = false
 }
 
+local RollSpeedPresets = {
+    {Name = "⚡ Chớp Nhoáng (0.03s)", Delay = 0.03},
+    {Name = "🚀 Siêu Tốc (0.05s)", Delay = 0.05},
+    {Name = "🔥 Cực Nhanh (0.10s)", Delay = 0.10},
+    {Name = "⏱️ Bình Thường (0.25s)", Delay = 0.25},
+    {Name = "🛡️ An Toàn (0.50s)", Delay = 0.50}
+}
+
 local CFrameMultipliers = {2, 5, 10, 20, 40}
 local CachedRemotes = {}
+
+-- ── Captured Remote & Hook Variables ──
+local CapturedRollRemote = nil
+local CapturedRollArgs = nil
+local CapturedRemoteType = "RemoteEvent"
+local updateCapturedUI = function(name) end
 
 -- ── Game Codes Database ──
 local GameCodes = {
@@ -132,6 +144,31 @@ pcall(function()
             VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
         end
     end)
+end)
+
+-- ── Metamethod Hook (Auto Capture Roll Remote) ──
+pcall(function()
+    if hookmetamethod then
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if (method == "FireServer" or method == "InvokeServer") and typeof(self) == "Instance" then
+                local sName = tostring(self.Name):lower()
+                if sName:find("roll") or sName:find("dice") or sName:find("spin") or sName:find("draw") or sName:find("anime") or sName:find("gacha") then
+                    if not sName:find("chat") and not sName:find("sound") then
+                        CapturedRollRemote = self
+                        CapturedRollArgs = {...}
+                        CapturedRemoteType = (method == "FireServer") and "RemoteEvent" or "RemoteFunction"
+                        pcall(function()
+                            updateCapturedUI(self.Name)
+                            setStatus("🎯 Bắt được Roll Remote: " .. self.Name)
+                        end)
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
 end)
 
 -- ── Intelligent Remote Scanner ──
@@ -181,19 +218,97 @@ local function triggerPrompt(prompt)
     end)
     pcall(function()
         prompt:InputHoldBegin()
-        task.wait(0.02)
+        task.wait(0.01)
         prompt:InputHoldEnd()
     end)
 end
 
--- Background Prompt Optimizer
+-- ── Cutscene & Roll Animation Destroyer (Allows Instant Consecutive Rolls) ──
+local function neutralizeRollCutscene()
+    if not State.KillCutscenes then return end
+    pcall(function()
+        -- 1. Scan PlayerGui to hide cutscene / roll animation frames
+        local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if pGui then
+            for _, gui in ipairs(pGui:GetChildren()) do
+                if gui:IsA("ScreenGui") and gui.Name ~= "RollAnimeHubGui" then
+                    local gName = gui.Name:lower()
+                    if gName:find("roll") or gName:find("cutscene") or gName:find("anim") 
+                       or gName:find("gacha") or gName:find("dice") or gName:find("reveal") then
+                        
+                        -- Auto Click any in-cutscene Skip button
+                        for _, desc in ipairs(gui:GetDescendants()) do
+                            if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+                                local bName = desc.Name:lower()
+                                local bText = desc:IsA("TextButton") and desc.Text:lower() or ""
+                                if bName:find("skip") or bName:find("fast") or bText:find("skip") or bText:find("bỏ qua") or bText:find("nhanh") then
+                                    if desc.Visible and firesignal then
+                                        firesignal(desc.MouseButton1Click)
+                                        firesignal(desc.Activated)
+                                    end
+                                end
+                            end
+                        end
+
+                        -- Hide roll cutscene containers
+                        for _, child in ipairs(gui:GetChildren()) do
+                            if child:IsA("Frame") or child:IsA("CanvasGroup") or child:IsA("ImageLabel") then
+                                local cName = child.Name:lower()
+                                if cName:find("anim") or cName:find("roll") or cName:find("cutscene") 
+                                   or cName:find("dice") or cName:find("card") or cName:find("reveal") or cName:find("spin") then
+                                    child.Visible = false
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 2. Stop character roll animations
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                local tName = track.Name:lower()
+                if tName:find("roll") or tName:find("dice") or tName:find("spin") or tName:find("anime") then
+                    track:Stop(0)
+                end
+            end
+        end
+
+        -- 3. Restore camera if locked by game cutscene
+        if Workspace.CurrentCamera and Workspace.CurrentCamera.CameraType ~= Enum.CameraType.Custom then
+            Workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+        end
+    end)
+end
+
+-- RenderStepped Cutscene Neutralizer (Ultra Fast Zero-Delay)
+RunService.RenderStepped:Connect(function()
+    if State.AutoRoll and State.FastRoll then
+        neutralizeRollCutscene()
+    end
+end)
+
+-- Auto-Enable Game Native Skip / Fast Roll Setting in PlayerGui
 task.spawn(function()
     while true do
-        task.wait(1.5)
+        task.wait(2.0)
         pcall(function()
-            for _, prompt in ipairs(Workspace:GetDescendants()) do
-                if prompt:IsA("ProximityPrompt") then
-                    optimizePrompt(prompt)
+            local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+            if pGui then
+                for _, desc in ipairs(pGui:GetDescendants()) do
+                    if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+                        local bName = desc.Name:lower()
+                        local bText = desc:IsA("TextButton") and desc.Text:lower() or ""
+                        if (bName:find("skip") or bName:find("fast") or bText:find("fast roll") or bText:find("skip anim") or bText:find("bỏ qua")) 
+                           and not bName:find("hub") and not bName:find("gui") then
+                            if desc.Visible and firesignal then
+                                firesignal(desc.MouseButton1Click)
+                            end
+                        end
+                    end
                 end
             end
         end)
@@ -252,48 +367,89 @@ LocalPlayer.CharacterAdded:Connect(function(char)
 end)
 
 -- ═══════════════════════════════════════════════════════════
--- ⚙️ BACKGROUND AUTOMATION LOOPS
+-- ⚙️ BACKGROUND AUTOMATION LOOPS (TURBO ENGINES)
 -- ═══════════════════════════════════════════════════════════
 
--- 1. Auto Fast Roll Loop
+-- 1. TURBO AUTO FAST ROLL LOOP
 task.spawn(function()
     while true do
-        local delayTime = State.FastRoll and 0.12 or State.RollDelay
+        local preset = RollSpeedPresets[State.RollDelayIndex] or RollSpeedPresets[2]
+        local delayTime = State.FastRoll and preset.Delay or 0.35
         task.wait(delayTime)
+
         if State.AutoRoll then
             pcall(function()
-                -- Method A: Trigger Roll Remote
-                local rollRemote = findRemote({"roll", "rolldice", "rollanime", "spin", "draw", "rollremote", "diceroll", "rollcharacter"})
+                neutralizeRollCutscene()
+
+                -- Priority 1: Trigger Hooked / Captured Remote (Bypass 100% UI and Debounce)
+                if CapturedRollRemote and CapturedRollRemote.Parent then
+                    if CapturedRemoteType == "RemoteEvent" then
+                        if CapturedRollArgs and #CapturedRollArgs > 0 then
+                            CapturedRollRemote:FireServer(unpack(CapturedRollArgs))
+                        else
+                            CapturedRollRemote:FireServer()
+                            CapturedRollRemote:FireServer(true)
+                            CapturedRollRemote:FireServer(1)
+                            CapturedRollRemote:FireServer("Fast")
+                        end
+                    elseif CapturedRemoteType == "RemoteFunction" then
+                        if CapturedRollArgs and #CapturedRollArgs > 0 then
+                            CapturedRollRemote:InvokeServer(unpack(CapturedRollArgs))
+                        else
+                            CapturedRollRemote:InvokeServer()
+                            CapturedRollRemote:InvokeServer(true)
+                        end
+                    end
+                    setStatus("⚡ Turbo Roll: Gọi trực tiếp [" .. CapturedRollRemote.Name .. "]!")
+                    return
+                end
+
+                -- Priority 2: Deep Scan ReplicatedStorage for Roll Remotes
+                local rollRemote = findRemote({"roll", "rolldice", "rollanime", "spin", "draw", "rollremote", "diceroll", "rollcharacter", "gacha"})
                 if rollRemote then
                     if rollRemote:IsA("RemoteEvent") then
                         rollRemote:FireServer()
-                        rollRemote:FireServer(1)
-                        rollRemote:FireServer("Roll")
+                        rollRemote:FireServer(true) -- Skips animation on server in many games
+                        rollRemote:FireServer(1, true)
+                        rollRemote:FireServer("Roll", true)
+                        rollRemote:FireServer("Fast")
                     elseif rollRemote:IsA("RemoteFunction") then
                         rollRemote:InvokeServer()
+                        rollRemote:InvokeServer(true)
                     end
+                    setStatus("⚡ Fast Roll: Đã gọi Remote [" .. rollRemote.Name .. "]!")
                 end
 
-                -- Method B: Click In-Game UI Roll Button
+                -- Priority 3: Trigger In-Game UI Roll Button with ALL Click Signals
                 local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
                 if playerGui then
                     for _, desc in ipairs(playerGui:GetDescendants()) do
-                        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+                        if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
                             local name = desc.Name:lower()
                             local text = desc:IsA("TextButton") and desc.Text:lower() or ""
-                            if name:find("roll") or name:find("spin") or name:find("dice") or text:find("roll") or text:find("lăn") or text:find("quay") then
-                                if desc.Visible and desc.Active then
-                                    if firesignal then
-                                        firesignal(desc.MouseButton1Click)
-                                        firesignal(desc.Activated)
-                                    end
+                            if (name:find("roll") or name:find("spin") or name:find("dice") or text:find("roll") or text:find("lăn") or text:find("quay")) 
+                               and not name:find("hub") and not name:find("fast") and not name:find("toggle") then
+                                
+                                if firesignal then
+                                    firesignal(desc.MouseButton1Down)
+                                    firesignal(desc.MouseButton1Up)
+                                    firesignal(desc.MouseButton1Click)
+                                    firesignal(desc.Activated)
                                 end
+                                
+                                -- Virtual Click Position
+                                pcall(function()
+                                    local absPos = desc.AbsolutePosition + (desc.AbsoluteSize / 2)
+                                    VirtualUser:Button1Down(Vector2.new(absPos.X, absPos.Y), Workspace.CurrentCamera.CFrame)
+                                    task.wait(0.01)
+                                    VirtualUser:Button1Up(Vector2.new(absPos.X, absPos.Y), Workspace.CurrentCamera.CFrame)
+                                end)
                             end
                         end
                     end
                 end
 
-                -- Method C: ProximityPrompt at Roll Pad / Dice Table
+                -- Priority 4: ProximityPrompt at Roll Pad / Dice Table
                 for _, prompt in ipairs(Workspace:GetDescendants()) do
                     if prompt:IsA("ProximityPrompt") then
                         local act = (prompt.ActionText or ""):lower()
@@ -308,8 +464,6 @@ task.spawn(function()
                         end
                     end
                 end
-
-                setStatus("🎲 Đang tự động Roll Anime liên tục...")
             end)
         end
     end
@@ -503,9 +657,9 @@ ScreenGui.Parent = getGuiContainer()
 -- Main Frame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 320, 0, 460)
-MainFrame.Position = UDim2.new(0.5, -160, 0.2, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(15, 12, 22) -- Deep Anime Purple
+MainFrame.Size = UDim2.new(0, 320, 0, 480)
+MainFrame.Position = UDim2.new(0.5, -160, 0.18, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 12, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.ClipsDescendants = true
@@ -516,7 +670,7 @@ MainCorner.CornerRadius = UDim.new(0, 12)
 MainCorner.Parent = MainFrame
 
 local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(255, 60, 100) -- Crimson Red / Neon Pink
+MainStroke.Color = Color3.fromRGB(255, 60, 100)
 MainStroke.Thickness = 1.8
 MainStroke.Parent = MainFrame
 
@@ -569,7 +723,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -90, 1, 0)
 Title.Position = UDim2.new(0, 12, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "🎲 ROLL FOR ANIME HUB ⚔️"
+Title.Text = "🎲 ROLL FOR ANIME V2.0 ⚡"
 Title.TextColor3 = Color3.fromRGB(255, 60, 100)
 Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 15
@@ -623,7 +777,7 @@ floatStroke.Parent = FloatingToggle
 local floatLabel = Instance.new("TextLabel")
 floatLabel.Size = UDim2.new(1, 0, 1, 0)
 floatLabel.BackgroundTransparency = 1
-floatLabel.Text = "🎲"
+floatLabel.Text = "⚡"
 floatLabel.TextSize = 24
 floatLabel.Parent = FloatingToggle
 
@@ -681,7 +835,7 @@ local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -8, 1, 0)
 StatusLabel.Position = UDim2.new(0, 6, 0, 0)
 StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Sẵn sàng | Roll for Anime Hub v1.0"
+StatusLabel.Text = "Sẵn sàng | Turbo Fast Roll v2.0"
 StatusLabel.TextColor3 = Color3.fromRGB(200, 180, 220)
 StatusLabel.Font = Enum.Font.SourceSansItalic
 StatusLabel.TextSize = 12
@@ -701,7 +855,7 @@ Scroll.BackgroundTransparency = 1
 Scroll.BorderSizePixel = 0
 Scroll.ScrollBarThickness = 4
 Scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 60, 100)
-Scroll.CanvasSize = UDim2.new(0, 0, 0, 800)
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 890)
 Scroll.Parent = MainFrame
 
 local UIList = Instance.new("UIListLayout")
@@ -715,7 +869,7 @@ local function createSectionHeader(titleText)
     header.Size = UDim2.new(1, 0, 0, 24)
     header.BackgroundTransparency = 1
     header.Text = " " .. titleText
-    header.TextColor3 = Color3.fromRGB(255, 215, 0) -- Gold
+    header.TextColor3 = Color3.fromRGB(255, 215, 0)
     header.Font = Enum.Font.SourceSansBold
     header.TextSize = 13
     header.TextXAlignment = Enum.TextXAlignment.Left
@@ -772,17 +926,105 @@ end
 
 -- ── BUILD CONTROLS ──
 
--- SECTION 1: AUTO ROLL
-createSectionHeader("🎲 TỰ ĐỘNG LĂN ANIME (AUTO ROLL)")
+-- SECTION 1: TURBO AUTO ROLL
+createSectionHeader("⚡ TURBO AUTO ROLL (SIÊU TỐC)")
 
-createToggle("🎲 Auto Roll (Tự Lăn Xúc Xắc)", State.AutoRoll, function(val)
+createToggle("🎲 Auto Roll (Tự Động Lăn Anime)", State.AutoRoll, function(val)
     State.AutoRoll = val
-    setStatus(val and "🎲 Đã BẬT Auto Roll Anime!" or "⏸️ Đã TẮT Auto Roll.")
+    setStatus(val and "🎲 Đã BẬT Auto Roll Turbo!" or "⏸️ Đã TẮT Auto Roll.")
 end)
 
-createToggle("⚡ Fast Roll (Bỏ Qua Animation Chờ)", State.FastRoll, function(val)
+createToggle("⚡ Fast Roll (Bỏ Qua Animation & Cooldown)", State.FastRoll, function(val)
     State.FastRoll = val
     setStatus(val and "⚡ Đã kích hoạt Fast Roll siêu tốc!" or "Đã tắt Fast Roll.")
+end)
+
+createToggle("🔥 Hủy Bỏ Cutscene / Màn Hình Chờ", State.KillCutscenes, function(val)
+    State.KillCutscenes = val
+    if val then
+        neutralizeRollCutscene()
+    end
+end)
+
+-- Roll Speed Selector
+local btnRollSpeed = Instance.new("TextButton")
+btnRollSpeed.Size = UDim2.new(1, -4, 0, 30)
+btnRollSpeed.BackgroundColor3 = Color3.fromRGB(34, 24, 50)
+btnRollSpeed.Text = "⏱️ Tốc độ Roll: [ " .. RollSpeedPresets[State.RollDelayIndex].Name .. " ]"
+btnRollSpeed.TextColor3 = Color3.fromRGB(255, 100, 150)
+btnRollSpeed.Font = Enum.Font.SourceSansBold
+btnRollSpeed.TextSize = 12
+btnRollSpeed.Parent = Scroll
+local rsCorner = Instance.new("UICorner")
+rsCorner.CornerRadius = UDim.new(0, 6)
+rsCorner.Parent = btnRollSpeed
+
+btnRollSpeed.MouseButton1Click:Connect(function()
+    State.RollDelayIndex = (State.RollDelayIndex % #RollSpeedPresets) + 1
+    btnRollSpeed.Text = "⏱️ Tốc độ Roll: [ " .. RollSpeedPresets[State.RollDelayIndex].Name .. " ]"
+    setStatus("⏱️ Đã chuyển tốc độ Roll sang: " .. RollSpeedPresets[State.RollDelayIndex].Name)
+end)
+
+-- Captured Remote Info Box
+local RemoteInfoFrame = Instance.new("Frame")
+RemoteInfoFrame.Size = UDim2.new(1, -4, 0, 30)
+RemoteInfoFrame.BackgroundColor3 = Color3.fromRGB(20, 16, 28)
+RemoteInfoFrame.BorderSizePixel = 0
+RemoteInfoFrame.Parent = Scroll
+local riCorner = Instance.new("UICorner")
+riCorner.CornerRadius = UDim.new(0, 6)
+riCorner.Parent = RemoteInfoFrame
+
+local RemoteInfoLabel = Instance.new("TextLabel")
+RemoteInfoLabel.Size = UDim2.new(1, -8, 1, 0)
+RemoteInfoLabel.Position = UDim2.new(0, 6, 0, 0)
+RemoteInfoLabel.BackgroundTransparency = 1
+RemoteInfoLabel.Text = "📡 Remote Bắt Được: [ Đang chờ roll... ]"
+RemoteInfoLabel.TextColor3 = Color3.fromRGB(0, 230, 180)
+RemoteInfoLabel.Font = Enum.Font.SourceSansBold
+RemoteInfoLabel.TextSize = 11
+RemoteInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+RemoteInfoLabel.Parent = RemoteInfoFrame
+
+updateCapturedUI = function(rName)
+    RemoteInfoLabel.Text = "📡 Remote Bắt Được: [" .. tostring(rName) .. "]"
+    RemoteInfoLabel.TextColor3 = Color3.fromRGB(0, 255, 120)
+end
+
+-- Button: Manual Test Roll / Force Trigger
+local btnTestRoll = Instance.new("TextButton")
+btnTestRoll.Size = UDim2.new(1, -4, 0, 30)
+btnTestRoll.BackgroundColor3 = Color3.fromRGB(190, 40, 80)
+btnTestRoll.Text = "🎯 NHẤN THỬ 1 LẦN (TEST ROLL & BẮT REMOTE)"
+btnTestRoll.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnTestRoll.Font = Enum.Font.SourceSansBold
+btnTestRoll.TextSize = 11
+btnTestRoll.Parent = Scroll
+local trCorner = Instance.new("UICorner")
+trCorner.CornerRadius = UDim.new(0, 6)
+trCorner.Parent = btnTestRoll
+
+btnTestRoll.MouseButton1Click:Connect(function()
+    neutralizeRollCutscene()
+    pcall(function()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if playerGui then
+            for _, desc in ipairs(playerGui:GetDescendants()) do
+                if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and desc.Visible then
+                    local name = desc.Name:lower()
+                    local text = desc:IsA("TextButton") and desc.Text:lower() or ""
+                    if (name:find("roll") or name:find("spin") or name:find("dice") or text:find("roll") or text:find("lăn") or text:find("quay")) 
+                       and not name:find("hub") and not name:find("fast") and not name:find("toggle") then
+                        if firesignal then
+                            firesignal(desc.MouseButton1Click)
+                            firesignal(desc.Activated)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    setStatus("🎯 Đã nhấn thử nút Roll trong game!")
 end)
 
 -- SECTION 2: MAY MẮN & NÂNG CẤP (LUCK BOOSTERS)
@@ -949,4 +1191,4 @@ createToggle("🚀 Giảm Đồ Họa Treo Máy (FPS Booster)", State.FPSBoost, 
     end)
 end)
 
-setStatus("Đã khởi tạo thành công Roll for Anime Hub!")
+setStatus("Đã khởi tạo thành công Roll for Anime Turbo Hub V2.0!")
